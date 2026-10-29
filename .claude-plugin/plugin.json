@@ -1,0 +1,186 @@
+{
+  "name": "cost-router",
+  "version": "0.2.0",
+  "description": "Cache-aware model and effort routing for the main chat and every subagent, a shared budget, evidence-labelled context thresholds, and verified automatic handoffs to a fresh context.",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "budgetUsd": {
+      "type": "number",
+      "title": "Task budget (USD, estimate)",
+      "description": "Hard limit per task at API list prices, shared by the main chat, every subagent, planner, handoff and check calls. Past it new prompts and agents are refused. 0 = no limit. Not a measure of subscription allowance.",
+      "default": 10
+    },
+    "budgetSpent": {
+      "type": "string",
+      "title": "When the budget is spent",
+      "description": "handoff: save a verified handoff, clear the context and continue in a fresh chat with a new budget. stop: refuse new prompts and agents until the budget is raised or /router reset.",
+      "options": ["handoff", "stop"],
+      "default": "handoff"
+    },
+    "softBudgetPct": {
+      "type": "number",
+      "title": "Soft budget (%)",
+      "description": "Past this share of the budget the router stops moving routes up a model and warns once.",
+      "default": 80
+    },
+    "mainModel": {
+      "type": "string",
+      "title": "Main chat model",
+      "description": "keep: the session's model stays (effort is routed; a stronger model only when checks keep failing). route: the main chat's model is routed too, behind the cost gate.",
+      "options": ["keep", "route"],
+      "default": "keep"
+    },
+    "tiers": {
+      "type": "string",
+      "title": "Model tiers",
+      "description": "Comma-separated model ids, cheapest first. Subagents are routed across them; the first three map to light, standard and hard work.",
+      "default": "claude-haiku-5-5,claude-sonnet-5-5,claude-opus-5-5"
+    },
+    "effortCap": {
+      "type": "string",
+      "title": "Highest reasoning effort",
+      "description": "The highest effort the router may use. Lower tiers climb only to high before the next model is tried.",
+      "options": ["low", "medium", "high", "xhigh", "max"],
+      "default": "xhigh"
+    },
+    "fable": {
+      "type": "string",
+      "title": "Fable for tasks too hard for the tiers",
+      "description": "When the strongest configured route still fails (checks keep failing at the top, or you say the last answer was wrong), ask: ask once per task whether to switch to the Fable model; auto: switch without asking; off: never. Never past the soft budget.",
+      "options": ["ask", "auto", "off"],
+      "default": "ask"
+    },
+    "fableModel": {
+      "type": "string",
+      "title": "Fable model id",
+      "description": "The model the setting above switches to.",
+      "default": "claude-fable-5-1"
+    },
+    "pinModel": {
+      "type": "string",
+      "title": "Pin main chat model",
+      "description": "A model id that always runs the main chat (subagents are still routed). Empty = automatic.",
+      "default": ""
+    },
+    "switchMarginPct": {
+      "type": "number",
+      "title": "Switch margin (%)",
+      "description": "A cost-driven change (model, effort, delegation, cost handoff) must save more than its overhead (cache rebuild, planning, agent startup, verification, retry risk, handoff) by this much.",
+      "default": 25
+    },
+    "minSwitchUsd": {
+      "type": "number",
+      "title": "Minimum benefit (USD)",
+      "description": "A cost-driven change must also save at least this much, net.",
+      "default": 0.02
+    },
+    "switchCooldownTurns": {
+      "type": "number",
+      "title": "Switch cooldown (turns)",
+      "description": "Main-chat turns after a route change before another cost-driven change. Quality-driven escalation is not held back.",
+      "default": 3
+    },
+    "retryRiskPct": {
+      "type": "number",
+      "title": "Retry risk (% per tier down)",
+      "description": "Heuristic: the share of the work expected to be redone per capability tier a cheaper route drops. Counted as overhead of the cheaper route.",
+      "default": 15
+    },
+    "pricesJson": {
+      "type": "string",
+      "title": "Price overrides (JSON)",
+      "description": "Merged over the built-in table, $/MTok: {\"model-id\": {\"in\": 2, \"out\": 10, \"read\": 0.2, \"write\": 2.5}}. Empty = built-in prices.",
+      "default": ""
+    },
+    "planner": {
+      "type": "boolean",
+      "title": "Plan long tasks",
+      "description": "Ask the cheapest model to break long or multi-step tasks into subtasks before the turn.",
+      "default": true
+    },
+    "plannerMinChars": {
+      "type": "number",
+      "title": "Planner threshold (characters)",
+      "description": "Prompts shorter than this (and not a multi-step list) are routed by the free heuristic alone and kept whole.",
+      "default": 400
+    },
+    "agentOverheadTokens": {
+      "type": "number",
+      "title": "Subagent startup (tokens)",
+      "description": "The fixed context a new subagent writes before working: part of the overhead a delegation must beat.",
+      "default": 15000
+    },
+    "maxConcurrentAgents": {
+      "type": "number",
+      "title": "Max concurrent agents",
+      "description": "Agents running at once, at every depth together.",
+      "default": 4
+    },
+    "maxDepth": {
+      "type": "number",
+      "title": "Max nesting depth",
+      "description": "1 = only the main chat may spawn agents; 2 = those agents may spawn one more level.",
+      "default": 2
+    },
+    "escalateAfterErrors": {
+      "type": "number",
+      "title": "Escalate after failures",
+      "description": "Failure points before a loop moves up (effort first, then the next model at the same effort). A failed test or build counts 2, another failed tool call 1; a passing check resets.",
+      "default": 3
+    },
+    "handoff": {
+      "type": "boolean",
+      "title": "Automatic handoff",
+      "description": "Between turns, past a threshold, save a verified handoff, clear the context and continue the task automatically.",
+      "default": true
+    },
+    "handoffContextPct": {
+      "type": "number",
+      "title": "Handoff at context (%)",
+      "description": "Context-window share that triggers a quality-driven handoff when no threshold below applies. 60 is an unvalidated fallback, not a measured degradation point. 0 = off.",
+      "default": 60
+    },
+    "handoffContextTokens": {
+      "type": "number",
+      "title": "Handoff at context (tokens)",
+      "description": "Absolute context size that triggers a quality-driven handoff when no threshold below applies. 0 = off.",
+      "default": 0
+    },
+    "thresholdsJson": {
+      "type": "string",
+      "title": "Thresholds per model and task (JSON)",
+      "description": "Overrides by key: \"model:kind\", \"model\", \"*:kind\" or \"default\"; kind is light, standard or hard. {\"claude-haiku-5-5:hard\": {\"pct\": 40, \"tokens\": 150000, \"source\": \"my eval 2026-11\"}}. Empty = the two settings above.",
+      "default": ""
+    },
+    "headroomTokens": {
+      "type": "number",
+      "title": "Reserve (tokens)",
+      "description": "Room kept below the context limit (or Claude Code's auto-compaction point) for the next operation and a complete handoff.",
+      "default": 30000
+    },
+    "signalsForHandoff": {
+      "type": "number",
+      "title": "Warning signals for an early handoff",
+      "description": "Repeated failed commands, rereads of unchanged files and repeated user instructions are signals, not proof: this many, at 75% of the threshold, bring a handoff forward. 0 = never.",
+      "default": 3
+    },
+    "handoffCostUsd": {
+      "type": "number",
+      "title": "Cost handoff at chat spend (USD)",
+      "description": "Spend in the current chat that proposes a cost-driven handoff; it runs only if its estimated saving beats its overhead by the margin. 0 = off.",
+      "default": 5
+    },
+    "expectedRemainingSteps": {
+      "type": "number",
+      "title": "Expected remaining requests",
+      "description": "How many more main-chat requests a cost-driven handoff's saving is counted over.",
+      "default": 10
+    },
+    "maxHandoffs": {
+      "type": "number",
+      "title": "Max handoffs per task",
+      "description": "A guard against handoff loops.",
+      "default": 5
+    }
+  }
+}

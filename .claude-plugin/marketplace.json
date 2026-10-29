@@ -1,0 +1,5 @@
+{
+  "name": "claude-cost-router-mod",
+  "owner": { "name": "MoaBelhadj" },
+  "plugins": [{ "name": "cost-router", "source": "./" }]
+}
